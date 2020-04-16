@@ -182,7 +182,7 @@ func main() {
 					break
 				}
 
-				msg.Text = "Feed " + title + " was added to this chat."
+				msg.Text = fmt.Sprintf("Feed \"%s\" was added to this chat.", title)
 			case "feeds":
 				feeds, err := db.FeedsByChat(context.Background(), chatID)
 				if err != nil {
