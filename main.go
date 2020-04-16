@@ -63,7 +63,7 @@ func checkPeriodic(ctx context.Context, db *DB, out chan<- Message) {
 				for _, item := range newItems {
 					out <- Message{
 						ChatID: sub.ChatID,
-						Text:   "**" + item.Title + "**\n" + item.Description + "\n\nLink: " + item.Link,
+						Text:   item.Title + "\n" + item.Description + "\n\nLink: " + item.Link,
 					}
 					db.UpdateSub(ctx, sub.ChatID, info.ID, *item.PublishedParsed)
 				}
@@ -165,7 +165,7 @@ func main() {
 						break
 					}
 
-					msg.Text = "Feed __" + title + "__ was added to this chat."
+					msg.Text = "Feed " + title + " was added to this chat."
 				default:
 					msg.Text = "I don't know that command"
 				}
