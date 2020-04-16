@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
 )
-import _ "github.com/go-sql-driver/mysql"
 
 type DB struct {
 	q *sql.DB
@@ -62,6 +64,42 @@ func (db *DB) AddFeedToChat(ctx context.Context, chatID int64, feed Feed) error 
 	return err
 }
 
+func (db *DB) FeedsByChat(ctx context.Context, chatID int64) (<-chan Feed, error) {
+	rows, err := db.q.QueryContext(ctx, "SELECT ROW_NUMBER() OVER (),feeds.title,feeds.url FROM updates JOIN feeds on updates.feedID = feeds.id WHERE updates.chatID = ? ORDER BY nr", chatID)
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan Feed)
+	go func() {
+		defer close(ch)
+
+		for rows.Next() {
+			var feed Feed
+
+			if err := rows.Scan(&feed.ID, &feed.Title, &feed.URL); err != nil {
+				rows.Close()
+				break
+			}
+
+			ch <- feed
+		}
+	}()
+
+	return ch, nil
+}
+
+func (db *DB) RemoveFeedFromChat(ctx context.Context, chatID, feedNum int64) error {
+	var feedID int64
+	row := db.q.QueryRowContext(ctx, fmt.Sprintf("SELECT feeds.id FROM updates JOIN feeds on updates.feedID = feeds.id WHERE updates.chatID = ? ORDER BY nr LIMIT %d, 1", feedNum-1), chatID)
+	if err := row.Scan(&feedID); err != nil {
+		return err
+	}
+
+	_, err := db.q.ExecContext(ctx, "DELETE FROM updates WHERE chatID=? AND feedID=?", chatID, feedID)
+	return err
+}
+
 type Feed struct {
 	ID    int64
 	Title string
@@ -88,6 +126,7 @@ func (db *DB) Feeds(ctx context.Context) (<-chan Feed, error) {
 			var id int64
 			var url string
 			if err := rows.Scan(&id, &url); err != nil {
+				rows.Close()
 				break
 			}
 
@@ -108,7 +147,7 @@ type Sub struct {
 }
 
 func (db *DB) Subs(ctx context.Context, feedID int64, latestUpdate *time.Time) (<-chan Sub, error) {
-	rows, err := db.q.QueryContext(ctx, "SELECT chatID, lastUpdate FROM updates WHERE updates.lastUpdate < ?", latestUpdate.Unix())
+	rows, err := db.q.QueryContext(ctx, "SELECT chatID, lastUpdate FROM updates WHERE feedID=? AND updates.lastUpdate < ?", feedID, latestUpdate.Unix())
 	if err != nil {
 		return nil, err
 	}

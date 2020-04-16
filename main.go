@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,7 +19,7 @@ type Message struct {
 }
 
 func checkPeriodic(ctx context.Context, db *DB, out chan<- Message) {
-	const waitTime = time.Hour * 2
+	const waitTime = time.Hour
 	wait := time.NewTimer(waitTime)
 
 	fp := gofeed.NewParser()
@@ -89,6 +91,13 @@ func checkPeriodic(ctx context.Context, db *DB, out chan<- Message) {
 	}
 }
 
+const helptext = `This bot can serve you in the following ways:
+
+/addfeed <url>  ... Adds an RSS/Atom feed to this chat
+/feeds ... Lists the feeds that are assigned to this chat
+/removefeed <id> ... Remove a particular feed from this chat (use the number from feeds command)
+`
+
 func main() {
 	db, err := OpenDB(dbSource)
 	if err != nil {
@@ -123,55 +132,89 @@ func main() {
 				continue
 			}
 
-			if update.Message.IsCommand() {
-				cmd := update.Message.Command()
-				args := update.Message.CommandArguments()
-				chatID := update.Message.Chat.ID
-				user := update.Message.From
+			if !update.Message.IsCommand() {
+				continue
+			}
 
-				log.Printf("user %s wrote command %s %s", user.UserName, cmd, args)
-				msg := tgbotapi.NewMessage(chatID, "")
-				switch cmd {
-				case "help":
-					msg.Text = "type /addfeed."
-				case "addfeed":
-					url := strings.TrimSpace(args)
-					if url == "" {
-						msg.Text = "copy the URL of the feed after the command"
-						break
-					}
+			cmd := update.Message.Command()
+			args := update.Message.CommandArguments()
+			chatID := update.Message.Chat.ID
+			user := update.Message.From
 
-					title := ""
-					info, err := db.FeedByURL(context.Background(), url)
-					if err != nil {
-						feed, err := fp.ParseURL(url)
-						if err != nil {
-							msg.Text = "error while fetching feed: " + err.Error()
-							break
-						}
-
-						title = feed.Title
-					} else {
-						title = info.Title
-					}
-
-					err = db.AddFeedToChat(context.Background(), chatID, Feed{
-						Title: title,
-						URL:   url,
-					})
-					if err != nil {
-						log.Printf("error: add feed to chat: ", err)
-						msg.Text = "Backend error"
-						break
-					}
-
-					msg.Text = "Feed " + title + " was added to this chat."
-				default:
-					msg.Text = "I don't know that command"
+			log.Printf("user %s wrote command %s %s", user.UserName, cmd, args)
+			msg := tgbotapi.NewMessage(chatID, "")
+			switch cmd {
+			case "help":
+				msg.Text = helptext
+			case "addfeed":
+				if user.UserName != "realchtis" {
+					bot.Send(tgbotapi.NewMessage(chatID, "You may not do this."))
+					break
 				}
 
-				bot.Send(msg)
+				url := strings.TrimSpace(args)
+				if url == "" {
+					msg.Text = "copy the URL of the feed after the command"
+					break
+				}
+
+				title := ""
+				info, err := db.FeedByURL(context.Background(), url)
+				if err != nil {
+					feed, err := fp.ParseURL(url)
+					if err != nil {
+						msg.Text = "error while fetching feed: " + err.Error()
+						break
+					}
+
+					title = feed.Title
+				} else {
+					title = info.Title
+				}
+
+				err = db.AddFeedToChat(context.Background(), chatID, Feed{
+					Title: title,
+					URL:   url,
+				})
+				if err != nil {
+					log.Println("error: add feed to chat: ", err)
+					msg.Text = "Backend error"
+					break
+				}
+
+				msg.Text = "Feed " + title + " was added to this chat."
+			case "feeds":
+				feeds, err := db.FeedsByChat(context.Background(), chatID)
+				if err != nil {
+					log.Println("error: enumerate feeds: ", err)
+					msg.Text = "Backend error"
+					break
+				}
+
+				msg.Text = "Feeds in this chat:\n"
+				for feed := range feeds {
+					msg.Text += fmt.Sprintf("[%d] %s (url %s)\n", feed.ID, feed.Title, feed.URL)
+				}
+
+			case "removefeed":
+				num, err := strconv.ParseInt(args, 10, 64)
+				if err != nil {
+					msg.Text = "Please provide the ID of the feed to remove"
+					break
+				}
+
+				if err := db.RemoveFeedFromChat(context.Background(), chatID, num); err != nil {
+					log.Println("error: removing feed: ", err)
+					msg.Text = "Backend error"
+					break
+				}
+
+				msg.Text = "Feed was removed."
+			default:
+				msg.Text = "I don't know that command"
 			}
+
+			bot.Send(msg)
 		}
 	}
 }
