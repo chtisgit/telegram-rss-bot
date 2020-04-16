@@ -71,12 +71,12 @@ func checkPeriodic(ctx context.Context, db *DB, out chan<- Message) {
 		}
 		log.Println("periodic check ended")
 
+	sel:
 		if !wait.Stop() {
 			<-wait.C
 		}
 		wait.Reset(waitTime)
 
-	sel:
 		select {
 		case <-ctx.Done():
 			if !wait.Stop() {
@@ -90,7 +90,7 @@ func checkPeriodic(ctx context.Context, db *DB, out chan<- Message) {
 }
 
 func main() {
-	db, err := OpenDB("test:test@/test")
+	db, err := OpenDB(dbSource)
 	if err != nil {
 		log.Fatalln("error: db: ", err)
 	}
@@ -99,8 +99,6 @@ func main() {
 	if err != nil {
 		log.Fatalln("error: bot api: ", err)
 	}
-
-	bot.Debug = true
 
 	log.Printf("Authorized on account %s", bot.Self.UserName)
 
