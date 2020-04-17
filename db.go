@@ -44,7 +44,7 @@ func (db *DB) AddFeedToChat(ctx context.Context, chatID int64, feed Feed) error 
 	}
 
 	var feedsInChat int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM feeds WHERE chatID=?", chatID).Scan(&feedsInChat); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM updates WHERE chatID=?", chatID).Scan(&feedsInChat); err != nil {
 		tx.Rollback()
 		return err
 	} else if db.MaxFeedsPerChat != 0 && feedsInChat >= db.MaxFeedsPerChat {
