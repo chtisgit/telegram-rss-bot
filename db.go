@@ -114,7 +114,7 @@ func (db *DB) AddFeedToChat(ctx context.Context, userID, chatID int64, feed Feed
 		}
 	}
 
-	_, err = tx.ExecContext(ctx, "INSERT INTO updates (chatID, feedID, userID, channel, lastUpdate) VALUES (?, ?, NULL, ?)", chatID, feedID, userID, time.Now().Unix())
+	_, err = tx.ExecContext(ctx, "INSERT INTO updates (chatID, feedID, userID, lastUpdate) VALUES (?, ?, ?, ?)", chatID, feedID, userID, time.Now().Unix())
 
 	if err != nil {
 		tx.Rollback()
@@ -235,4 +235,14 @@ func (db *DB) Subs(ctx context.Context, feedID int64, latestUpdate *time.Time) (
 func (db *DB) UpdateSub(ctx context.Context, chatID, feedID int64, t time.Time) error {
 	_, err := db.q.ExecContext(ctx, "UPDATE updates SET lastUpdate=? WHERE chatID=? AND feedID=?", t.Unix(), chatID, feedID)
 	return err
+}
+
+func (db *DB) AddFeedError(ctx context.Context, feedID int64) error {
+	_, err := db.q.ExecContext(ctx, "INSERT INTO feedErrors (feedID, timestamp) VALUES (?,?)", feedID, time.Now().Unix())
+	return err
+}
+
+func (db *DB) RecentFeedErrors(ctx context.Context, since time.Time, feedID int64) (n int, err error) {
+	err = db.q.QueryRowContext(ctx, "SELECT COUNT(*) FROM feedErrors WHERE feedID=? AND timestamp >= ?", feedID, since.Unix()).Scan(&n)
+	return
 }
