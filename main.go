@@ -38,7 +38,7 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 	}
 
 	for info := range feeds {
-		url := "https://" + info.URL
+		url := "https:" + info.URL
 		log.Println("load feed ", url)
 
 		feed, err := fp.ParseURLWithContext(url, ctx)
