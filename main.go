@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	tgbotapi "github.com/chtisgit/telegram-bot-api"
@@ -18,72 +21,103 @@ type Message struct {
 	Text   string
 }
 
-func checkPeriodic(ctx context.Context, db *DB, out chan<- Message) {
-	const waitTime = time.Hour
-	wait := time.NewTimer(waitTime)
+const waitBetweenUpdatesTime = time.Hour
+const updateTimeout = time.Minute * 10
 
+func update(ctx context.Context, db *DB, out chan<- Message) (anyErr error) {
 	fp := gofeed.NewParser()
 
-	for {
-		feeds, err := db.Feeds(ctx)
+	feeds, err := db.Feeds(ctx)
+	if err != nil {
+		log.Println("error: update: ", err)
+		return err
+	}
+
+	for info := range feeds {
+		log.Println("load feed ", info.URL)
+
+		feed, err := fp.ParseURL(info.URL)
 		if err != nil {
-			log.Println("error: checkPeriodic: ", err)
-			goto sel
+			log.Println("error with feed ", info.URL)
+
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
+			continue
 		}
 
-		log.Println("periodic check started")
-		for info := range feeds {
-			log.Println("load feed ", info.URL)
+		updated := feed.UpdatedParsed
+		if updated == nil {
+			log.Println("error with feed ", info.URL, ": no timestamp")
+			continue
+		}
 
-			feed, err := fp.ParseURL(info.URL)
-			if err != nil {
-				log.Println("error with feed ", info.URL)
-				continue
+		subs, err := db.Subs(ctx, info.ID, updated)
+		if err != nil {
+			log.Println("error: getting chat ids: ", err)
+
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
 
-			updated := feed.UpdatedParsed
-			if updated == nil {
-				log.Println("error with feed ", info.URL, ": no timestamp")
-				continue
+			continue
+		}
+
+		log.Printf("%d chats subscribed to this feed\n", len(subs))
+		for sub := range subs {
+			newItems := []*gofeed.Item{}
+			for _, item := range feed.Items {
+				if item.PublishedParsed != nil && item.PublishedParsed.After(sub.LastUpdate) {
+					newItems = append(newItems, item)
+				}
 			}
 
-			subs, err := db.Subs(ctx, info.ID, updated)
-			if err != nil {
-				log.Println("error: getting chat ids: ", err)
-				continue
-			}
+			log.Printf("for chat %d, there are %d items published after the last update on %s\n", sub.ChatID, len(newItems), sub.LastUpdate)
 
-			log.Printf("%d chats subscribed to this feed\n", len(subs))
-			for sub := range subs {
-				newItems := []*gofeed.Item{}
-				for _, item := range feed.Items {
-					if item.PublishedParsed != nil && item.PublishedParsed.After(sub.LastUpdate) {
-						newItems = append(newItems, item)
-					}
+			sort.Slice(newItems, func(i, j int) bool {
+				return newItems[i].PublishedParsed.Before(*newItems[j].PublishedParsed)
+			})
+
+			for _, item := range newItems {
+				out <- Message{
+					ChatID: sub.ChatID,
+					Text:   item.Title + "\n" + item.Description + "\n\nLink: " + item.Link,
 				}
 
-				log.Printf("for chat %d, there are %d items published after the last update on %s\n", sub.ChatID, len(newItems), sub.LastUpdate)
+				anyErr = db.UpdateSub(ctx, sub.ChatID, info.ID, *item.PublishedParsed)
+				log.Println("error: update: UpdateSub: ", anyErr)
 
-				sort.Slice(newItems, func(i, j int) bool {
-					return newItems[i].PublishedParsed.Before(*newItems[j].PublishedParsed)
-				})
-
-				for _, item := range newItems {
-					out <- Message{
-						ChatID: sub.ChatID,
-						Text:   item.Title + "\n" + item.Description + "\n\nLink: " + item.Link,
-					}
-					db.UpdateSub(ctx, sub.ChatID, info.ID, *item.PublishedParsed)
+				if ctx.Err() != nil {
+					return ctx.Err()
 				}
 			}
 		}
-		log.Println("periodic check ended")
+	}
 
-	sel:
+	return
+}
+
+func periodicUpdate(ctx context.Context, db *DB, out chan<- Message) {
+	wait := time.NewTimer(waitBetweenUpdatesTime)
+
+	for {
+		log.Println("periodic update started")
+
+		updateCtx, cancel := context.WithTimeout(ctx, updateTimeout)
+		err := update(updateCtx, db, out)
+		cancel()
+
+		if err != nil && err == ctx.Err() {
+			log.Println("error: update took too long.")
+		}
+
+		log.Println("periodic update ended")
+
 		if !wait.Stop() {
 			<-wait.C
 		}
-		wait.Reset(waitTime)
+		wait.Reset(waitBetweenUpdatesTime)
 
 		select {
 		case <-ctx.Done():
@@ -128,10 +162,24 @@ func main() {
 
 	sendCh := make(chan Message)
 
-	go checkPeriodic(context.Background(), db, sendCh)
+	osSignals := make(chan os.Signal, 1)
+
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go periodicUpdate(ctx, db, sendCh)
 
 	for {
 		select {
+		case <-ctx.Done():
+			log.Printf("shutting down")
+			return
+
+		case sig := <-osSignals:
+			log.Printf("received signal %s", sig)
+			cancel()
+
 		case msg := <-sendCh:
 			bot.Send(tgbotapi.NewMessage(msg.ChatID, msg.Text))
 
@@ -167,7 +215,7 @@ func main() {
 				}
 
 				title := ""
-				info, err := db.FeedByURL(context.Background(), url)
+				info, err := db.FeedByURL(ctx, url)
 				if err != nil {
 					feed, err := fp.ParseURL(url)
 					if err != nil {
@@ -180,7 +228,7 @@ func main() {
 					title = info.Title
 				}
 
-				err = db.AddFeedToChat(context.Background(), int64(user.ID), chatID, Feed{
+				err = db.AddFeedToChat(ctx, int64(user.ID), chatID, Feed{
 					Title: title,
 					URL:   url,
 				})
@@ -202,7 +250,7 @@ func main() {
 				}
 
 			case "feeds":
-				feeds, err := db.FeedsByChat(context.Background(), chatID)
+				feeds, err := db.FeedsByChat(ctx, chatID)
 				if err != nil {
 					log.Println("error: enumerate feeds: ", err)
 					msg.Text = "Backend error"
@@ -227,7 +275,7 @@ func main() {
 					break
 				}
 
-				if err := db.RemoveFeedFromChat(context.Background(), chatID, num); err != nil {
+				if err := db.RemoveFeedFromChat(ctx, chatID, num); err != nil {
 					log.Println("error: removing feed: ", err)
 					msg.Text = "Backend error"
 					break
