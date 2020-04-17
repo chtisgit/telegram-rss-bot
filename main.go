@@ -285,7 +285,7 @@ func main() {
 			return
 
 		case sig := <-osSignals:
-			logrus.Info("received signal %s", sig)
+			logrus.Infof("received signal %s", sig)
 			cancel()
 
 		case msg := <-sendCh:
