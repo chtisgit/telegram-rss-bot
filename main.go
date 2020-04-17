@@ -57,7 +57,7 @@ func checkPeriodic(ctx context.Context, db *DB, out chan<- Message) {
 			for sub := range subs {
 				newItems := []*gofeed.Item{}
 				for _, item := range feed.Items {
-					if item.PublishedParsed.After(sub.LastUpdate) {
+					if item.PublishedParsed != nil && item.PublishedParsed.After(sub.LastUpdate) {
 						newItems = append(newItems, item)
 					}
 				}
