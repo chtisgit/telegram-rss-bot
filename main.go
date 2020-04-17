@@ -24,7 +24,7 @@ type Message struct {
 }
 
 const waitBetweenUpdatesTime = time.Hour
-const updateTimeout = time.Minute
+const updateTimeout = time.Minute * 20
 
 func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error) {
 	ctx, cancel := context.WithTimeout(parentCtx, updateTimeout)
