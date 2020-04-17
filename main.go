@@ -287,6 +287,12 @@ func main() {
 
 	go periodicUpdate(ctx, db, sendCh)
 
+	if len(cfg.Bot.UserWhitelist) == 0 {
+		logrus.Info("No whitelist active")
+	} else {
+		logrus.Info("Whitelisting these users: ", cfg.Bot.UserWhitelist)
+	}
+
 	logrus.Info("Ready")
 	for {
 		select {
@@ -327,7 +333,7 @@ func main() {
 				bot.Send(tgbotapi.NewMessage(chatID, helptext))
 
 			case "addfeed":
-				if cfg.IsWhitelisted(user.UserName) {
+				if !cfg.IsWhitelisted(user.UserName) {
 					bot.Send(tgbotapi.NewMessage(chatID, "You may not do this."))
 					break
 				}
