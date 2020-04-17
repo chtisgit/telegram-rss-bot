@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
+	tgbotapi "github.com/chtisgit/telegram-bot-api"
 	"github.com/mmcdole/gofeed"
 )
 
