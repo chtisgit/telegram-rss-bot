@@ -180,7 +180,7 @@ func main() {
 					title = info.Title
 				}
 
-				err = db.AddFeedToChat(context.Background(), chatID, Feed{
+				err = db.AddFeedToChat(context.Background(), int64(user.ID), chatID, Feed{
 					Title: title,
 					URL:   url,
 				})
@@ -190,9 +190,14 @@ func main() {
 
 				case ErrMaxFeedsInChat:
 					msg.Text = "You cannot add more feeds to this chat."
+					log.Printf("error: maximum reached for user %s (%d): %s", user.UserName, user.ID, err)
+
+				case ErrMaxActiveFeedsByUser, ErrMaxTotalFeedsByUser:
+					log.Printf("error: maximum reached for user %s (%d): %s", user.UserName, user.ID, err)
+					msg.Text = "I think you have added enough feeds for now."
 
 				default:
-					log.Println("error: add feed to chat: ", err)
+					log.Println("error: add feed to chat (user %s [%d]): ", user.UserName, user.ID, err)
 					msg.Text = "Backend error"
 				}
 

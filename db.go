@@ -10,13 +10,26 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+type queryRower interface {
+	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
+
+type checkFunc func(ctx context.Context, q queryRower, userID, chatID int64) error
+
 type DB struct {
 	q *sql.DB
 
-	MaxFeedsPerChat int
+	checkAddConstraint checkFunc
+
+	MaxFeedsPerChat      int
+	MaxTotalFeedsByUser  int
+	MaxActiveFeedsByUser int
 }
 
 var ErrMaxFeedsInChat = errors.New("chat is already at maximum feeds")
+var ErrMaxTotalFeedsByUser = errors.New("user added too many feeds")
+var ErrMaxActiveFeedsByUser = errors.New("user has too many active feeds")
 
 func OpenDB(url string) (*DB, error) {
 	q, err := sql.Open("mysql", url)
@@ -37,19 +50,40 @@ func (db *DB) Close() error {
 	return db.q.Close()
 }
 
-func (db *DB) AddFeedToChat(ctx context.Context, chatID int64, feed Feed) error {
+func (db *DB) Prepare() {
+	q1 := fmt.Sprintf("SELECT COUNT(*) < %d FROM updates WHERE chatID=?", db.MaxFeedsPerChat)
+	q2 := fmt.Sprintf("SELECT COUNT(*) < %d FROM feeds WHERE userID=?", db.MaxTotalFeedsByUser)
+	q3 := fmt.Sprintf("SELECT COUNT(*) < %d FROM updates WHERE userID=?", db.MaxActiveFeedsByUser)
+
+	fullQuery := fmt.Sprintf("SELECT (%s) + 2*(%s) + 4*(%s)", q1, q2, q3)
+
+	db.checkAddConstraint = func(ctx context.Context, q queryRower, userID, chatID int64) error {
+		var res uint
+		if err := q.QueryRowContext(ctx, fullQuery, chatID, userID, userID).Scan(&res); err != nil {
+			return err
+		}
+
+		if res&1 != 0 {
+			return ErrMaxFeedsInChat
+		} else if res&2 != 0 {
+			return ErrMaxTotalFeedsByUser
+		} else if res&4 != 0 {
+			return ErrMaxActiveFeedsByUser
+		}
+
+		return nil
+	}
+}
+
+func (db *DB) AddFeedToChat(ctx context.Context, userID, chatID int64, feed Feed) error {
 	tx, err := db.q.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 
-	var feedsInChat int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM updates WHERE chatID=?", chatID).Scan(&feedsInChat); err != nil {
+	if err := db.checkAddConstraint(ctx, tx, userID, chatID); err != nil {
 		tx.Rollback()
 		return err
-	} else if db.MaxFeedsPerChat != 0 && feedsInChat >= db.MaxFeedsPerChat {
-		tx.Rollback()
-		return ErrMaxFeedsInChat
 	}
 
 	var feedID int64
