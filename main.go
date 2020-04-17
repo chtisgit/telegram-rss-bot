@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
@@ -37,11 +38,12 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 	}
 
 	for info := range feeds {
-		log.Println("load feed ", info.URL)
+		url := "https://" + info.URL
+		log.Println("load feed ", url)
 
-		feed, err := fp.ParseURLWithContext(info.URL, ctx)
+		feed, err := fp.ParseURLWithContext(url, ctx)
 		if err != nil {
-			log.Println("error with feed ", info.URL)
+			log.Println("error with feed ", url)
 
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -52,7 +54,7 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 
 		updated := feed.UpdatedParsed
 		if updated == nil {
-			log.Println("error with feed ", info.URL, ": no timestamp")
+			log.Println("error with feed ", url, ": no timestamp")
 			continue
 		}
 
@@ -138,6 +140,62 @@ const helptext = `This bot can serve you in the following ways:
 /removefeed <id> ... Remove a particular feed from this chat (use the number from feeds command)
 `
 
+func addFeed(ctx context.Context, db *DB, user tgbotapi.User, chatID int64, feedURL string) tgbotapi.Chattable {
+	fp := gofeed.NewParser()
+
+	u, err := url.Parse(feedURL)
+	if err != nil {
+		log.Printf("error: cannot parse URL %s", feedURL)
+		return tgbotapi.NewMessage(chatID, "Your feed is fishy.")
+	}
+
+	u.Scheme = ""
+	url := u.String()
+
+	title := ""
+	info, err := db.FeedByURL(ctx, url)
+	if err != nil {
+		// try to fetch the feed via HTTPS
+		u.Scheme = "https"
+
+		feed, err := fp.ParseURLWithContext(u.String(), ctx)
+		if err != nil {
+			log.Printf("error fetching unknown feed %s", u.String())
+
+			return tgbotapi.NewMessage(chatID, "I cannot fetch your feed using HTTPS :(")
+		}
+
+		title = feed.Title
+	} else {
+		title = info.Title
+	}
+
+	err = db.AddFeedToChat(ctx, int64(user.ID), chatID, Feed{
+		Title: title,
+		URL:   url,
+	})
+
+	msg := tgbotapi.NewMessage(chatID, "")
+	switch err {
+	case nil:
+		msg.Text = fmt.Sprintf("Feed \"%s\" was added to this chat.", title)
+
+	case ErrMaxFeedsInChat:
+		msg.Text = "You cannot add more feeds to this chat."
+		log.Printf("error: maximum reached for user %s (%d): %s", user.UserName, user.ID, err)
+
+	case ErrMaxActiveFeedsByUser, ErrMaxTotalFeedsByUser:
+		log.Printf("error: maximum reached for user %s (%d): %s", user.UserName, user.ID, err)
+		msg.Text = "I think you have added enough feeds for now."
+
+	default:
+		log.Printf("error: add feed to chat (user %s [%d]): %s", user.UserName, user.ID, err)
+		msg.Text = "Backend error"
+	}
+
+	return msg
+}
+
 func main() {
 	db, err := OpenDB(dbSource)
 	if err != nil {
@@ -162,8 +220,6 @@ func main() {
 	u.Timeout = 60
 
 	updateCh, err := bot.GetUpdatesChan(u)
-
-	fp := gofeed.NewParser()
 
 	sendCh := make(chan Message)
 
@@ -203,95 +259,67 @@ func main() {
 			user := update.Message.From
 
 			log.Printf("user %s wrote command %s %s", user.UserName, cmd, args)
-			msg := tgbotapi.NewMessage(chatID, "")
 			switch cmd {
 			case "help":
-				msg.Text = helptext
+				bot.Send(tgbotapi.NewMessage(chatID, helptext))
+
 			case "addfeed":
 				if user.UserName != "realchtis" {
 					bot.Send(tgbotapi.NewMessage(chatID, "You may not do this."))
 					break
 				}
 
-				url := strings.TrimSpace(args)
-				if url == "" {
-					msg.Text = "copy the URL of the feed after the command"
+				args = strings.TrimSpace(args)
+				if args == "" {
+					bot.Send(tgbotapi.NewMessage(chatID, "copy the URL of the feed after the command"))
 					break
 				}
 
-				title := ""
-				info, err := db.FeedByURL(ctx, url)
-				if err != nil {
-					feed, err := fp.ParseURL(url)
-					if err != nil {
-						msg.Text = "error while fetching feed: " + err.Error()
-						break
+				go func() {
+					msg := addFeed(ctx, db, *user, chatID, args)
+					if msg != nil {
+						bot.Send(msg)
 					}
-
-					title = feed.Title
-				} else {
-					title = info.Title
-				}
-
-				err = db.AddFeedToChat(ctx, int64(user.ID), chatID, Feed{
-					Title: title,
-					URL:   url,
-				})
-				switch err {
-				case nil:
-					msg.Text = fmt.Sprintf("Feed \"%s\" was added to this chat.", title)
-
-				case ErrMaxFeedsInChat:
-					msg.Text = "You cannot add more feeds to this chat."
-					log.Printf("error: maximum reached for user %s (%d): %s", user.UserName, user.ID, err)
-
-				case ErrMaxActiveFeedsByUser, ErrMaxTotalFeedsByUser:
-					log.Printf("error: maximum reached for user %s (%d): %s", user.UserName, user.ID, err)
-					msg.Text = "I think you have added enough feeds for now."
-
-				default:
-					log.Printf("error: add feed to chat (user %s [%d]): %s", user.UserName, user.ID, err)
-					msg.Text = "Backend error"
-				}
+				}()
 
 			case "feeds":
 				feeds, err := db.FeedsByChat(ctx, chatID)
 				if err != nil {
 					log.Println("error: enumerate feeds: ", err)
-					msg.Text = "Backend error"
+					bot.Send(tgbotapi.NewMessage(chatID, "Backend error"))
 					break
 				}
 
-				msg.Text = "Feeds in this chat:\n"
+				text := "Feeds in this chat:\n"
 				anyFeeds := false
 				for feed := range feeds {
-					msg.Text += fmt.Sprintf("[%d] %s (url %s)\n", feed.ID, feed.Title, feed.URL)
+					text += fmt.Sprintf("[%d] %s (url %s)\n", feed.ID, feed.Title, feed.URL)
 					anyFeeds = true
 				}
 
 				if !anyFeeds {
-					msg.Text = "No feeds in this chat."
+					text = "No feeds in this chat."
 				}
+
+				bot.Send(tgbotapi.NewMessage(chatID, text))
 
 			case "removefeed":
 				num, err := strconv.ParseInt(args, 10, 64)
 				if err != nil {
-					msg.Text = "Please provide the ID of the feed to remove"
+					bot.Send(tgbotapi.NewMessage(chatID, "Please provide the ID of the feed to remove"))
 					break
 				}
 
 				if err := db.RemoveFeedFromChat(ctx, chatID, num); err != nil {
 					log.Println("error: removing feed: ", err)
-					msg.Text = "Backend error"
+					bot.Send(tgbotapi.NewMessage(chatID, "Backend error"))
 					break
 				}
 
-				msg.Text = "Feed was removed."
+				bot.Send(tgbotapi.NewMessage(chatID, "Feed was removed."))
 			default:
-				msg.Text = "I don't know that command"
+				bot.Send(tgbotapi.NewMessage(chatID, "I don't know that command"))
 			}
-
-			bot.Send(msg)
 		}
 	}
 }
