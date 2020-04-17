@@ -144,6 +144,8 @@ func main() {
 		log.Fatalln("error: db: ", err)
 	}
 
+	defer db.Close()
+
 	db.MaxFeedsPerChat = 10
 
 	bot, err := tgbotapi.NewBotAPI(apiKey)
