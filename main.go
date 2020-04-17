@@ -250,7 +250,7 @@ func main() {
 					msg.Text = "I think you have added enough feeds for now."
 
 				default:
-					log.Println("error: add feed to chat (user %s [%d]): ", user.UserName, user.ID, err)
+					log.Printf("error: add feed to chat (user %s [%d]): %s", user.UserName, user.ID, err)
 					msg.Text = "Backend error"
 				}
 
