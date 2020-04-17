@@ -32,6 +32,9 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 
 	fp := gofeed.NewParser()
 
+	updateCount := 0
+	defer logrus.Infof("update: Sent %d feed updates to chats.", updateCount)
+
 	feeds, err := db.Feeds(ctx)
 	if err != nil {
 		logrus.WithError(err).Error("update: get feeds")
@@ -103,6 +106,7 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 					ChatID: sub.ChatID,
 					Text:   item.Title + "\n" + item.Description + "\n\nLink: " + item.Link,
 				}
+				updateCount++
 
 				anyErr = db.UpdateSub(ctx, sub.ChatID, info.ID, *item.PublishedParsed)
 				logrus.WithError(anyErr).Error("update: UpdateSub")
