@@ -192,8 +192,14 @@ func main() {
 				}
 
 				msg.Text = "Feeds in this chat:\n"
+				anyFeeds := false
 				for feed := range feeds {
 					msg.Text += fmt.Sprintf("[%d] %s (url %s)\n", feed.ID, feed.Title, feed.URL)
+					anyFeeds = true
+				}
+
+				if !anyFeeds {
+					msg.Text = "No feeds in this chat."
 				}
 
 			case "removefeed":
