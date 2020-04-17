@@ -53,9 +53,20 @@ func (db *DB) Close() error {
 }
 
 func (db *DB) Prepare() {
-	q1 := fmt.Sprintf("SELECT COUNT(*) < %d FROM updates WHERE chatID=?", db.MaxFeedsPerChat)
-	q2 := fmt.Sprintf("SELECT COUNT(*) < %d FROM feeds WHERE userID=?", db.MaxTotalFeedsByUser)
-	q3 := fmt.Sprintf("SELECT COUNT(*) < %d FROM updates WHERE userID=?", db.MaxActiveFeedsByUser)
+	q1 := fmt.Sprintf("SELECT COUNT(*) >= %d FROM updates WHERE chatID=?", db.MaxFeedsPerChat)
+	if db.MaxFeedsPerChat == 0 {
+		q1 = "0"
+	}
+
+	q2 := fmt.Sprintf("SELECT COUNT(*) >= %d FROM feeds WHERE userID=?", db.MaxTotalFeedsByUser)
+	if db.MaxTotalFeedsByUser == 0 {
+		q2 = "0"
+	}
+
+	q3 := fmt.Sprintf("SELECT COUNT(*) >= %d FROM updates WHERE userID=?", db.MaxActiveFeedsByUser)
+	if db.MaxActiveFeedsByUser == 0 {
+		q3 = "0"
+	}
 
 	fullQuery := fmt.Sprintf("SELECT (%s) + 2*(%s) + 4*(%s)", q1, q2, q3)
 

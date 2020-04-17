@@ -22,9 +22,12 @@ type Message struct {
 }
 
 const waitBetweenUpdatesTime = time.Hour
-const updateTimeout = time.Minute * 10
+const updateTimeout = time.Minute
 
-func update(ctx context.Context, db *DB, out chan<- Message) (anyErr error) {
+func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error) {
+	ctx, cancel := context.WithTimeout(parentCtx, updateTimeout)
+	defer cancel()
+
 	fp := gofeed.NewParser()
 
 	feeds, err := db.Feeds(ctx)
@@ -104,10 +107,7 @@ func periodicUpdate(ctx context.Context, db *DB, out chan<- Message) {
 	for {
 		log.Println("periodic update started")
 
-		updateCtx, cancel := context.WithTimeout(ctx, updateTimeout)
-		err := update(updateCtx, db, out)
-		cancel()
-
+		err := update(ctx, db, out)
 		if err != nil && err == ctx.Err() {
 			log.Println("error: update took too long.")
 		}
@@ -147,6 +147,9 @@ func main() {
 	defer db.Close()
 
 	db.MaxFeedsPerChat = 10
+	db.MaxTotalFeedsByUser = 200
+	db.MaxActiveFeedsByUser = 20
+	db.Prepare()
 
 	bot, err := tgbotapi.NewBotAPI(apiKey)
 	if err != nil {
