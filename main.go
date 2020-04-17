@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"os/signal"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/sirupsen/logrus"
 
 	tgbotapi "github.com/chtisgit/telegram-bot-api"
 	"github.com/mmcdole/gofeed"
@@ -33,17 +34,17 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 
 	feeds, err := db.Feeds(ctx)
 	if err != nil {
-		log.Println("error: update: ", err)
+		logrus.WithError(err).Error("update: get feeds")
 		return err
 	}
 
 	for info := range feeds {
 		url := "https:" + info.URL
-		log.Println("load feed ", url)
+		logrus.WithError(err).WithField("Feed", url).Debug("update: load feed")
 
 		feed, err := fp.ParseURLWithContext(url, ctx)
 		if err != nil {
-			log.Println("error with feed ", url)
+			logrus.WithError(err).WithField("Feed", url).Error("update: error with feed (parsing)")
 
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -54,13 +55,13 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 
 		updated := feed.UpdatedParsed
 		if updated == nil {
-			log.Println("error with feed ", url, ": no timestamp")
+			logrus.WithError(err).WithField("Feed", url).Error("update: no timestamp")
 			continue
 		}
 
 		subs, err := db.Subs(ctx, info.ID, updated)
 		if err != nil {
-			log.Println("error: getting chat ids: ", err)
+			logrus.WithError(err).WithField("Feed", url).Error("update: getting chat IDs")
 
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -69,7 +70,11 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 			continue
 		}
 
-		log.Printf("%d chats subscribed to this feed\n", len(subs))
+		logrus.WithFields(logrus.Fields{
+			"#Chats": len(subs),
+			"Feed":   info.URL,
+		}).Debug("update: chats that need update")
+
 		for sub := range subs {
 			newItems := []*gofeed.Item{}
 			for _, item := range feed.Items {
@@ -78,7 +83,16 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 				}
 			}
 
-			log.Printf("for chat %d, there are %d items published after the last update on %s\n", sub.ChatID, len(newItems), sub.LastUpdate)
+			if len(newItems) == 0 {
+				continue
+			}
+
+			logrus.WithFields(logrus.Fields{
+				"Chat ID":      sub.ChatID,
+				"New Items":    len(newItems),
+				"Chat updated": sub.LastUpdate,
+				"Feed updated": updated,
+			}).Debug("update: new items for chat")
 
 			sort.Slice(newItems, func(i, j int) bool {
 				return newItems[i].PublishedParsed.Before(*newItems[j].PublishedParsed)
@@ -91,7 +105,7 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 				}
 
 				anyErr = db.UpdateSub(ctx, sub.ChatID, info.ID, *item.PublishedParsed)
-				log.Println("error: update: UpdateSub: ", anyErr)
+				logrus.WithError(anyErr).Error("update: UpdateSub")
 
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -107,14 +121,14 @@ func periodicUpdate(ctx context.Context, db *DB, out chan<- Message) {
 	wait := time.NewTimer(waitBetweenUpdatesTime)
 
 	for {
-		log.Println("periodic update started")
+		logrus.Info("periodic update started")
 
 		err := update(ctx, db, out)
 		if err != nil && err == ctx.Err() {
-			log.Println("error: update took too long.")
+			logrus.WithContext(ctx).Error("update took too long.")
 		}
 
-		log.Println("periodic update ended")
+		logrus.Info("periodic update ended")
 
 		if !wait.Stop() {
 			<-wait.C
@@ -141,11 +155,22 @@ const helptext = `This bot can serve you in the following ways:
 `
 
 func addFeed(ctx context.Context, db *DB, user tgbotapi.User, chatID int64, feedURL string) tgbotapi.Chattable {
+	logrus.WithFields(logrus.Fields{
+		"Username": user.UserName,
+		"Name":     user.FirstName + " " + user.LastName,
+		"User ID":  user.ID,
+		"Chat ID":  chatID,
+		"Feed URL": feedURL,
+	}).Debug("/addfeed command")
+
 	fp := gofeed.NewParser()
 
 	u, err := url.Parse(feedURL)
 	if err != nil {
-		log.Printf("error: cannot parse URL %s", feedURL)
+		logrus.WithFields(logrus.Fields{
+			"Feed URL": feedURL,
+		}).Warn("cannot parse URL")
+
 		return tgbotapi.NewMessage(chatID, "Your feed is fishy.")
 	}
 
@@ -160,7 +185,10 @@ func addFeed(ctx context.Context, db *DB, user tgbotapi.User, chatID int64, feed
 
 		feed, err := fp.ParseURLWithContext(u.String(), ctx)
 		if err != nil {
-			log.Printf("error fetching unknown feed %s", u.String())
+			logrus.WithFields(logrus.Fields{
+				"Feed URL":  feedURL,
+				"HTTPS URL": u.String(),
+			}).Warn("cannot fetch feed")
 
 			return tgbotapi.NewMessage(chatID, "I cannot fetch your feed using HTTPS :(")
 		}
@@ -182,24 +210,42 @@ func addFeed(ctx context.Context, db *DB, user tgbotapi.User, chatID int64, feed
 
 	case ErrMaxFeedsInChat:
 		msg.Text = "You cannot add more feeds to this chat."
-		log.Printf("error: maximum reached for user %s (%d): %s", user.UserName, user.ID, err)
+
+		logrus.WithFields(logrus.Fields{
+			"Username": user.UserName,
+			"User ID":  user.ID,
+			"Chat ID":  chatID,
+		}).Error("maximum feeds in chat reached")
 
 	case ErrMaxActiveFeedsByUser, ErrMaxTotalFeedsByUser:
-		log.Printf("error: maximum reached for user %s (%d): %s", user.UserName, user.ID, err)
 		msg.Text = "I think you have added enough feeds for now."
 
+		logrus.WithFields(logrus.Fields{
+			"Username": user.UserName,
+			"User ID":  user.ID,
+		}).WithError(err).Error("maximum feeds by user reached")
+
 	default:
-		log.Printf("error: add feed to chat (user %s [%d]): %s", user.UserName, user.ID, err)
 		msg.Text = "Backend error"
+
+		logrus.WithFields(logrus.Fields{
+			"Username": user.UserName,
+			"User ID":  user.ID,
+		}).WithError(err).Error("unknown error in AddFeedToChat")
 	}
 
 	return msg
 }
 
 func main() {
+	logrus.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+	})
+	logrus.SetLevel(logrus.DebugLevel)
+
 	db, err := OpenDB(dbSource)
 	if err != nil {
-		log.Fatalln("error: db: ", err)
+		logrus.WithError(err).Fatalln("cannot open DB")
 	}
 
 	defer db.Close()
@@ -211,10 +257,10 @@ func main() {
 
 	bot, err := tgbotapi.NewBotAPI(apiKey)
 	if err != nil {
-		log.Fatalln("error: bot api: ", err)
+		logrus.WithError(err).Fatalln("bot api error")
 	}
 
-	log.Printf("Authorized on account %s", bot.Self.UserName)
+	logrus.WithField("Bot User", bot.Self.UserName).Info("Authorized")
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -231,14 +277,15 @@ func main() {
 
 	go periodicUpdate(ctx, db, sendCh)
 
+	logrus.Info("Ready")
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("shutting down")
+			logrus.Info("shutting down")
 			return
 
 		case sig := <-osSignals:
-			log.Printf("received signal %s", sig)
+			logrus.Info("received signal %s", sig)
 			cancel()
 
 		case msg := <-sendCh:
@@ -258,7 +305,13 @@ func main() {
 			chatID := update.Message.Chat.ID
 			user := update.Message.From
 
-			log.Printf("user %s wrote command %s %s", user.UserName, cmd, args)
+			logrus.WithFields(logrus.Fields{
+				"User ID":  user.ID,
+				"Username": user.UserName,
+				"Cmd":      cmd,
+				"Args":     args,
+			}).Debug("received command")
+
 			switch cmd {
 			case "help":
 				bot.Send(tgbotapi.NewMessage(chatID, helptext))
@@ -285,7 +338,7 @@ func main() {
 			case "feeds":
 				feeds, err := db.FeedsByChat(ctx, chatID)
 				if err != nil {
-					log.Println("error: enumerate feeds: ", err)
+					logrus.WithError(err).WithField("Chat ID", chatID).Error("enumerating feeds of chat")
 					bot.Send(tgbotapi.NewMessage(chatID, "Backend error"))
 					break
 				}
@@ -311,7 +364,11 @@ func main() {
 				}
 
 				if err := db.RemoveFeedFromChat(ctx, chatID, num); err != nil {
-					log.Println("error: removing feed: ", err)
+					logrus.WithError(err).WithFields(logrus.Fields{
+						"Chat ID": chatID,
+						"#":       num,
+					}).Error("remove feed from chat failed")
+
 					bot.Send(tgbotapi.NewMessage(chatID, "Backend error"))
 					break
 				}
