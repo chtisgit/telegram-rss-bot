@@ -41,7 +41,13 @@ func checkPeriodic(ctx context.Context, db *DB, out chan<- Message) {
 				continue
 			}
 
-			subs, err := db.Subs(ctx, info.ID, feed.UpdatedParsed)
+			updated := feed.UpdatedParsed
+			if updated == nil {
+				log.Println("error with feed ", info.URL, ": no timestamp")
+				continue
+			}
+
+			subs, err := db.Subs(ctx, info.ID, updated)
 			if err != nil {
 				log.Println("error: getting chat ids: ", err)
 				continue
