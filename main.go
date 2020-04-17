@@ -23,6 +23,7 @@ type Message struct {
 	Text   string
 }
 
+const configfilePath = "/etc/telegram-rss-bot.toml"
 const waitBetweenUpdatesTime = time.Hour
 const updateTimeout = time.Minute * 20
 
@@ -247,19 +248,24 @@ func main() {
 	})
 	logrus.SetLevel(logrus.DebugLevel)
 
-	db, err := OpenDB(dbSource)
+	cfg, err := loadConfigFile(configfilePath)
+	if err != nil {
+		logrus.WithError(err).WithField("path", configfilePath).Fatalln("Cannot open config file")
+	}
+
+	db, err := OpenDB(cfg.DB.Source)
 	if err != nil {
 		logrus.WithError(err).Fatalln("cannot open DB")
 	}
 
 	defer db.Close()
 
-	db.MaxFeedsPerChat = 10
-	db.MaxTotalFeedsByUser = 200
-	db.MaxActiveFeedsByUser = 20
+	db.MaxFeedsPerChat = cfg.Bot.MaxFeedsPerChat
+	db.MaxTotalFeedsByUser = cfg.Bot.MaxTotalFeedsByUser
+	db.MaxActiveFeedsByUser = cfg.Bot.MaxActiveFeedsByUser
 	db.Prepare()
 
-	bot, err := tgbotapi.NewBotAPI(apiKey)
+	bot, err := tgbotapi.NewBotAPI(cfg.Bot.APIKey)
 	if err != nil {
 		logrus.WithError(err).Fatalln("bot api error")
 	}
