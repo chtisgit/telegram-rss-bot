@@ -184,13 +184,18 @@ func main() {
 					Title: title,
 					URL:   url,
 				})
-				if err != nil {
+				switch err {
+				case nil:
+					msg.Text = fmt.Sprintf("Feed \"%s\" was added to this chat.", title)
+
+				case ErrMaxFeedsInChat:
+					msg.Text = "You cannot add more feeds to this chat."
+
+				default:
 					log.Println("error: add feed to chat: ", err)
 					msg.Text = "Backend error"
-					break
 				}
 
-				msg.Text = fmt.Sprintf("Feed \"%s\" was added to this chat.", title)
 			case "feeds":
 				feeds, err := db.FeedsByChat(context.Background(), chatID)
 				if err != nil {
