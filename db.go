@@ -37,6 +37,8 @@ func OpenDB(url string) (*DB, error) {
 		return nil, err
 	}
 
+	q.SetConnMaxLifetime(time.Minute * 5)
+
 	if err := q.Ping(); err != nil {
 		return nil, err
 	}
