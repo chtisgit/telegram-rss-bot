@@ -327,7 +327,7 @@ func main() {
 				bot.Send(tgbotapi.NewMessage(chatID, helptext))
 
 			case "addfeed":
-				if user.UserName != "realchtis" {
+				if cfg.IsWhitelisted(user.UserName) {
 					bot.Send(tgbotapi.NewMessage(chatID, "You may not do this."))
 					break
 				}
