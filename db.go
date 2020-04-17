@@ -101,7 +101,7 @@ func (db *DB) AddFeedToChat(ctx context.Context, userID, chatID int64, feed Feed
 
 	var feedID int64
 	if err := tx.QueryRowContext(ctx, "SELECT id FROM feeds WHERE url=?", feed.URL).Scan(&feedID); err != nil {
-		res, err := tx.ExecContext(ctx, "INSERT INTO feeds (url,title) VALUES (?,?)", feed.URL, feed.Title)
+		res, err := tx.ExecContext(ctx, "INSERT INTO feeds (url,title,userID) VALUES (?,?,?)", feed.URL, feed.Title, userID)
 		if err != nil {
 			tx.Rollback()
 			return err
@@ -114,7 +114,7 @@ func (db *DB) AddFeedToChat(ctx context.Context, userID, chatID int64, feed Feed
 		}
 	}
 
-	_, err = tx.ExecContext(ctx, "INSERT INTO updates (chatID, feedID, channel, lastUpdate) VALUES (?, ?, NULL, ?)", chatID, feedID, time.Now().Unix())
+	_, err = tx.ExecContext(ctx, "INSERT INTO updates (chatID, feedID, userID, channel, lastUpdate) VALUES (?, ?, NULL, ?)", chatID, feedID, userID, time.Now().Unix())
 
 	if err != nil {
 		tx.Rollback()
