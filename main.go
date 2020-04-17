@@ -166,7 +166,7 @@ func main() {
 
 	osSignals := make(chan os.Signal, 1)
 
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(osSignals, syscall.SIGINT, syscall.SIGTERM)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
