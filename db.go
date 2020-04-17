@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,7 +12,11 @@ import (
 
 type DB struct {
 	q *sql.DB
+
+	MaxFeedsPerChat int
 }
+
+var ErrMaxFeedsInChat = errors.New("chat is already at maximum feeds")
 
 func OpenDB(url string) (*DB, error) {
 	q, err := sql.Open("mysql", url)
@@ -38,6 +43,15 @@ func (db *DB) AddFeedToChat(ctx context.Context, chatID int64, feed Feed) error 
 		return err
 	}
 
+	var feedsInChat int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM feeds WHERE chatID=?", chatID).Scan(&feedsInChat); err != nil {
+		tx.Rollback()
+		return err
+	} else if db.MaxFeedsPerChat != 0 && feedsInChat >= db.MaxFeedsPerChat {
+		tx.Rollback()
+		return ErrMaxFeedsInChat
+	}
+
 	var feedID int64
 	if err := tx.QueryRowContext(ctx, "SELECT id FROM feeds WHERE url=?", feed.URL).Scan(&feedID); err != nil {
 		res, err := tx.ExecContext(ctx, "INSERT INTO feeds (url,title) VALUES (?,?)", feed.URL, feed.Title)
@@ -55,13 +69,12 @@ func (db *DB) AddFeedToChat(ctx context.Context, chatID int64, feed Feed) error 
 
 	_, err = tx.ExecContext(ctx, "INSERT INTO updates (chatID, feedID, channel, lastUpdate) VALUES (?, ?, NULL, ?)", chatID, feedID, time.Now().Unix())
 
-	if err == nil {
-		err = tx.Commit()
-	} else {
+	if err != nil {
 		tx.Rollback()
+		return err
 	}
 
-	return err
+	return tx.Commit()
 }
 
 func (db *DB) FeedsByChat(ctx context.Context, chatID int64) (<-chan Feed, error) {

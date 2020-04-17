@@ -104,6 +104,8 @@ func main() {
 		log.Fatalln("error: db: ", err)
 	}
 
+	db.MaxFeedsPerChat = 10
+
 	bot, err := tgbotapi.NewBotAPI(apiKey)
 	if err != nil {
 		log.Fatalln("error: bot api: ", err)
