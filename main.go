@@ -36,7 +36,7 @@ func update(ctx context.Context, db *DB, out chan<- Message) (anyErr error) {
 	for info := range feeds {
 		log.Println("load feed ", info.URL)
 
-		feed, err := fp.ParseURL(info.URL)
+		feed, err := fp.ParseURLWithContext(info.URL, ctx)
 		if err != nil {
 			log.Println("error with feed ", info.URL)
 
