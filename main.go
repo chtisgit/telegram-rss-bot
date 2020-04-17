@@ -44,7 +44,7 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 
 	for info := range feeds {
 		url := "https:" + info.URL
-		logrus.WithError(err).WithField("Feed", url).Debug("update: load feed")
+		logrus.WithField("Feed", url).Debug("update: load feed")
 
 		feed, err := fp.ParseURLWithContext(url, ctx)
 		if err != nil {
