@@ -2,7 +2,6 @@ package main
 
 import (
 	"sort"
-	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -35,9 +34,7 @@ func loadConfigFile(path string) (*Config, error) {
 		return nil, err
 	}
 
-	sort.Slice(cfg.Bot.UserWhitelist, func(i, j int) bool {
-		return strings.Compare(cfg.Bot.UserWhitelist[i], cfg.Bot.UserWhitelist[j]) == -1
-	})
+	sort.Strings(cfg.Bot.UserWhitelist)
 
 	return cfg, nil
 }
