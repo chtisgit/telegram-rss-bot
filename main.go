@@ -164,7 +164,8 @@ func update(parentCtx context.Context, db *DB, send sendFunc) (anyErr error) {
 }
 
 func periodicUpdate(ctx context.Context, db *DB, send sendFunc) {
-	wait := time.NewTimer(waitBetweenUpdatesTime)
+	tick := time.NewTicker(waitBetweenUpdatesTime)
+	defer tick.Stop()
 
 	for {
 		logrus.Info("periodic update started")
@@ -176,19 +177,10 @@ func periodicUpdate(ctx context.Context, db *DB, send sendFunc) {
 
 		logrus.Info("periodic update ended")
 
-		if !wait.Stop() {
-			<-wait.C
-		}
-		wait.Reset(waitBetweenUpdatesTime)
-
 		select {
 		case <-ctx.Done():
-			if !wait.Stop() {
-				<-wait.C
-			}
-
 			return
-		case <-wait.C:
+		case <-tick.C:
 		}
 	}
 }
