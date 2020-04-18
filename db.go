@@ -246,3 +246,8 @@ func (db *DB) RecentFeedErrors(ctx context.Context, since time.Time, feedID int6
 	err = db.q.QueryRowContext(ctx, "SELECT COUNT(*) FROM feedErrors WHERE feedID=? AND timestamp >= ?", feedID, since.Unix()).Scan(&n)
 	return
 }
+
+func (db *DB) DropFeed(ctx context.Context, id int64) error {
+	_, err := db.q.ExecContext(ctx, "DELETE FROM feeds WHERE id=?", id)
+	return err
+}

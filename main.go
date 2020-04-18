@@ -18,16 +18,47 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-type Message struct {
-	ChatID int64
-	Text   string
-}
-
 const configfilePath = "/etc/telegram-rss-bot.toml"
 const waitBetweenUpdatesTime = time.Hour
 const updateTimeout = time.Minute * 20
 
-func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error) {
+type sendFunc func(chatID int64, text string)
+
+var firstSecond = time.Unix(0, 0)
+
+func feedError(ctx context.Context, db *DB, feed *Feed, send sendFunc) {
+	if n, err := db.RecentFeedErrors(ctx, time.Now().Add(-time.Hour*12), feed.ID); err != nil {
+		return
+	} else if n >= 9 {
+		logrus.WithField("Feed", feed.URL).Error("too many errors, dropping feed")
+
+		var chatIDs []int64
+		subs, err := db.Subs(ctx, feed.ID, &firstSecond)
+		if err != nil {
+			logrus.WithError(err).WithField("Feed", feed.URL).Error("failed to fetch subs for feed")
+		} else {
+			for sub := range subs {
+				chatIDs = append(chatIDs, sub.ChatID)
+			}
+		}
+
+		if err := db.DropFeed(ctx, feed.ID); err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"Errors/12h": n,
+				"Feed":       feed.URL,
+			}).Error("cannot drop feed")
+			return
+		}
+
+		go func() {
+			for _, chatID := range chatIDs {
+				send(chatID, fmt.Sprintf("Your feed \"%s\" was removed because it could not be loaded multiple times.", feed.Title))
+			}
+		}()
+	}
+}
+
+func update(parentCtx context.Context, db *DB, send sendFunc) (anyErr error) {
 	ctx, cancel := context.WithTimeout(parentCtx, updateTimeout)
 	defer cancel()
 
@@ -53,6 +84,8 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+
+			feedError(ctx, db, &info, send)
 
 			continue
 		}
@@ -103,10 +136,7 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 			})
 
 			for _, item := range newItems {
-				out <- Message{
-					ChatID: sub.ChatID,
-					Text:   item.Title + "\n" + item.Description + "\n\nLink: " + item.Link,
-				}
+				send(sub.ChatID, fmt.Sprintf("%s\n%s\n\nLink: %s", item.Title, item.Description, item.Link))
 				updateCount++
 
 				anyErr = db.UpdateSub(ctx, sub.ChatID, info.ID, *item.PublishedParsed)
@@ -122,13 +152,13 @@ func update(parentCtx context.Context, db *DB, out chan<- Message) (anyErr error
 	return
 }
 
-func periodicUpdate(ctx context.Context, db *DB, out chan<- Message) {
+func periodicUpdate(ctx context.Context, db *DB, send sendFunc) {
 	wait := time.NewTimer(waitBetweenUpdatesTime)
 
 	for {
 		logrus.Info("periodic update started")
 
-		err := update(ctx, db, out)
+		err := update(ctx, db, send)
 		if err != nil && err == ctx.Err() {
 			logrus.WithContext(ctx).Error("update took too long.")
 		}
@@ -277,7 +307,10 @@ func main() {
 
 	updateCh, err := bot.GetUpdatesChan(u)
 
-	sendCh := make(chan Message)
+	sendCh := make(chan tgbotapi.Chattable)
+	send := func(chatID int64, text string) {
+		sendCh <- tgbotapi.NewMessage(chatID, text)
+	}
 
 	osSignals := make(chan os.Signal, 1)
 
@@ -285,7 +318,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	go periodicUpdate(ctx, db, sendCh)
+	go periodicUpdate(ctx, db, send)
 
 	if len(cfg.Bot.UserWhitelist) == 0 {
 		logrus.Info("No whitelist active")
@@ -304,8 +337,8 @@ func main() {
 			logrus.Infof("received signal %s", sig)
 			cancel()
 
-		case msg := <-sendCh:
-			bot.Send(tgbotapi.NewMessage(msg.ChatID, msg.Text))
+		case c := <-sendCh:
+			bot.Send(c)
 
 		case update := <-updateCh:
 			if update.Message == nil {
