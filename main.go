@@ -92,8 +92,19 @@ func update(parentCtx context.Context, db *DB, send sendFunc) (anyErr error) {
 
 		updated := feed.UpdatedParsed
 		if updated == nil {
-			logrus.WithError(err).WithField("Feed", url).Error("update: no timestamp")
-			continue
+			updated = &firstSecond
+			for _, item := range feed.Items {
+				pub := item.PublishedParsed
+				if pub != nil && pub.After(*updated) {
+					updated = pub
+				}
+			}
+
+			if updated == &firstSecond {
+				logrus.WithError(err).WithField("Feed", url).Error("update: no timestamps")
+				feedError(ctx, db, &info, send)
+				continue
+			}
 		}
 
 		subs, err := db.Subs(ctx, info.ID, updated)
