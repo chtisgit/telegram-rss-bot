@@ -10,6 +10,7 @@ type BotConfig struct {
 	APIKey string `toml:"api-key"`
 
 	UserWhitelist []string `toml:"user-whitelist"`
+	LogRequests   bool     `toml:"log-requests"`
 
 	// Constraints
 	MaxFeedsPerChat      int `toml:"max-feeds-per-chat"`

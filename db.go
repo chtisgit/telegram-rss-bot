@@ -251,3 +251,13 @@ func (db *DB) DropFeed(ctx context.Context, id int64) error {
 	_, err := db.q.ExecContext(ctx, "DELETE FROM feeds WHERE id=?", id)
 	return err
 }
+
+func (db *DB) LogRequest(ctx context.Context, name, text string, userID int64) error {
+	_, err := db.q.ExecContext(ctx, "INSERT INTO requests (userID, timestamp, name, text)", userID, time.Now().Unix(), name, text)
+	return err
+}
+
+func (db *DB) RecentRequests(ctx context.Context, since time.Time, userID int64) (n int, err error) {
+	err = db.q.QueryRowContext(ctx, "SELECT COUNT(*) FROM requests WHERE userID=? AND timestamp >= ?", userID, since.Unix()).Scan(&n)
+	return
+}

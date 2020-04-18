@@ -364,6 +364,7 @@ func main() {
 			args := update.Message.CommandArguments()
 			chatID := update.Message.Chat.ID
 			user := update.Message.From
+			fullName := fmt.Sprint(user.FirstName, " ", user.LastName)
 
 			logrus.WithFields(logrus.Fields{
 				"User ID":  user.ID,
@@ -371,6 +372,23 @@ func main() {
 				"Cmd":      cmd,
 				"Args":     args,
 			}).Debug("received command")
+
+			if cfg.Bot.LogRequests {
+				if n, err := db.RecentRequests(ctx, time.Now().Add(-time.Minute*5), int64(user.ID)); err != nil {
+					logrus.WithError(err).Error("recent requests select error")
+				} else if n > 25 {
+					logrus.WithFields(logrus.Fields{
+						"User":     fullName,
+						"Username": user.UserName,
+					}).Error("many requests coming from user. ignoring.")
+					continue
+				}
+
+				err := db.LogRequest(ctx, fullName, update.Message.Text, int64(user.ID))
+				if err != nil {
+					logrus.WithError(err).Warn("cannot log request")
+				}
+			}
 
 			switch cmd {
 			case "help":
