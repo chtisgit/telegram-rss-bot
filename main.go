@@ -406,7 +406,7 @@ func main() {
 				text := "Feeds in this chat:\n"
 				anyFeeds := false
 				for feed := range feeds {
-					text += fmt.Sprintf("[%d] %s (url %s)\n", feed.ID, feed.Title, feed.URL)
+					text += fmt.Sprintf("[%d] %s (url https:%s)\n", feed.ID, feed.Title, feed.URL)
 					anyFeeds = true
 				}
 
