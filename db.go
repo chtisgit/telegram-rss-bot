@@ -253,7 +253,7 @@ func (db *DB) DropFeed(ctx context.Context, id int64) error {
 }
 
 func (db *DB) LogRequest(ctx context.Context, name, text string, userID int64) error {
-	_, err := db.q.ExecContext(ctx, "INSERT INTO requests (userID, timestamp, name, text)", userID, time.Now().Unix(), name, text)
+	_, err := db.q.ExecContext(ctx, "INSERT INTO requests (userID, timestamp, name, text) VALUES (?,?,?,?)", userID, time.Now().Unix(), name, text)
 	return err
 }
 
