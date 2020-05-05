@@ -142,7 +142,13 @@ func (db *DB) FeedsByChat(ctx context.Context, chatID int64) (<-chan Feed, error
 				break
 			}
 
-			ch <- feed
+			select {
+			case ch <- feed:
+				// data sent
+			case <-ctx.Done():
+				rows.Close()
+				return
+			}
 		}
 	}()
 
@@ -190,9 +196,15 @@ func (db *DB) Feeds(ctx context.Context) (<-chan Feed, error) {
 				break
 			}
 
-			ch <- Feed{
+			select {
+			case ch <- Feed{
 				ID:  id,
 				URL: url,
+			}:
+				// data sent
+			case <-ctx.Done():
+				rows.Close()
+				return
 			}
 		}
 	}()
@@ -222,9 +234,15 @@ func (db *DB) Subs(ctx context.Context, feedID int64, latestUpdate *time.Time) (
 				break
 			}
 
-			ch <- Sub{
+			select {
+			case ch <- Sub{
 				ChatID:     chatID,
 				LastUpdate: time.Unix(lastUpdate, 0),
+			}:
+				// data sent
+			case <-ctx.Done():
+				rows.Close()
+				return
 			}
 		}
 	}()
